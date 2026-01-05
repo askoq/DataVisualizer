@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DataVisualizer</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+  <div class="app-container">
+    <div class="titlebar" data-tauri-drag-region>
+      <div class="titlebar-left">
+        <span class="titlebar-icon">◫</span>
+        <span class="titlebar-title">DataVisualizer</span>
+      </div>
+      <div class="titlebar-controls">
+        <button class="titlebar-btn" id="minimizeBtn" title="Minimize">─</button>
+        <button class="titlebar-btn" id="maximizeBtn" title="Maximize">□</button>
+        <button class="titlebar-btn titlebar-close" id="closeBtn" title="Close">✕</button>
+      </div>
+    </div>
+
+    <header class="header">
+      <div class="header-left">
+        <button class="btn" id="openFileBtn">Open</button>
+        <button class="btn btn-primary" id="newFileBtn">New</button>
+      </div>
+      <div class="header-right" id="fileActions" style="display: none;">
+        <div class="file-info">
+          <span class="file-name" id="fileName">data.json</span>
+          <span class="file-type-badge" id="fileType">JSON</span>
+        </div>
+        <div class="file-stats">
+          <span class="stat" id="rowCount">0 rows</span>
+          <span class="stat" id="colCount">0 cols</span>
+        </div>
+        <div class="search-container">
+          <span class="search-icon">⌕</span>
+          <input type="text" class="search-input" id="searchInput" placeholder="Search..." />
+        </div>
+        <button class="btn btn-small" id="addRowBtn">+ Row</button>
+        <button class="btn btn-small" id="addColBtn">+ Col</button>
+        <button class="btn btn-success btn-small" id="saveBtn">Save</button>
+        <button class="btn btn-small" id="exportBtn">Export</button>
+      </div>
+    </header>
+
+    <div class="welcome-screen" id="welcomeScreen">
+      <div class="welcome-icon">◫</div>
+      <h1 class="welcome-title">DataVisualizer</h1>
+      <p class="welcome-subtitle">
+        View and edit JSON, JSONL, and CSV files
+      </p>
+
+      <div class="supported-formats">
+        <span class="format-badge">.json</span>
+        <span class="format-badge">.jsonl</span>
+        <span class="format-badge">.csv</span>
+      </div>
+
+      <div class="drop-zone" id="dropZone">
+        <div class="drop-zone-content">
+          <div class="drop-zone-icon">↓</div>
+          <div class="drop-zone-text">Drop file or click to open</div>
+          <div class="drop-zone-hint">JSON, JSONL, CSV</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="main-content" id="mainContent" style="display: none;">
+      <div class="table-container" id="tableContainer">
+        <table class="data-table" id="dataTable">
+          <thead id="tableHead"></thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+      </div>
+
+      <div class="pagination" id="pagination">
+        <button class="btn btn-icon btn-small" id="firstPageBtn" title="First">«</button>
+        <button class="btn btn-icon btn-small" id="prevPageBtn" title="Previous">‹</button>
+        <span class="page-info" id="pageInfo">1-100 of 1000</span>
+        <button class="btn btn-icon btn-small" id="nextPageBtn" title="Next">›</button>
+        <button class="btn btn-icon btn-small" id="lastPageBtn" title="Last">»</button>
+      </div>
+    </div>
+
+    <div class="status-bar">
+      <div class="status-left">
+        <div class="status-indicator">
+          <div class="status-dot" id="statusDot"></div>
+          <span id="statusText">Ready</span>
+        </div>
+      </div>
+      <div class="status-right">
+        <div class="tooltip-wrapper">
+          <span>v1.0.0</span>
+          <div class="tooltip-content">made by <a href="#" id="authorLink">askoq</a></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast-container" id="toastContainer"></div>
+
+  <div class="modal-overlay" id="addRowModal" style="display: none;">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 class="modal-title">Add Row</h3>
+        <button class="modal-close" id="closeAddRowModal">×</button>
+      </div>
+      <div class="modal-body" id="addRowForm"></div>
+      <div class="modal-footer">
+        <button class="btn" id="cancelAddRow">Cancel</button>
+        <button class="btn btn-primary" id="confirmAddRow">Add</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="addColModal" style="display: none;">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 class="modal-title">Add Column</h3>
+        <button class="modal-close" id="closeAddColModal">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Column Name</label>
+          <input type="text" class="form-input" id="newColName" placeholder="column_name" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" id="cancelAddCol">Cancel</button>
+        <button class="btn btn-primary" id="confirmAddCol">Add</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="exportModal" style="display: none;">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 class="modal-title">Export</h3>
+        <button class="modal-close" id="closeExportModal">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Format</label>
+          <select class="form-input" id="exportFormat">
+            <option value="json">JSON</option>
+            <option value="jsonl">JSONL</option>
+            <option value="csv">CSV</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" id="cancelExport">Cancel</button>
+        <button class="btn btn-primary" id="confirmExport">Export</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="context-menu" id="contextMenu" style="display: none;">
+    <div class="context-menu-item" id="ctxEditCell">Edit</div>
+    <div class="context-menu-item" id="ctxDuplicateRow">Duplicate Row</div>
+    <div class="context-menu-divider"></div>
+    <div class="context-menu-item danger" id="ctxDeleteRow">Delete Row</div>
+  </div>
+
+  <script src="main.js"></script>
+</body>
+
+</html>
