@@ -1,7 +1,7 @@
 {
   "name": "data-visualizer",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Application for viewing and editing JSON, JSONL, and CSV files.",
   "author": "askoq <https://github.com/askoq>",
   "type": "module",

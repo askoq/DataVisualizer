@@ -2,6 +2,7 @@ const { invoke } = window.__TAURI__.core;
 const { open, save } = window.__TAURI__.dialog;
 const { getCurrentWindow } = window.__TAURI__.window;
 const { open: openUrl } = window.__TAURI__.opener;
+const { listen } = window.__TAURI__.event;
 
 const ROWS_PER_PAGE = 100;
 
@@ -110,7 +111,7 @@ function setupEventListeners() {
 
   elements.minimizeBtn.addEventListener('click', async () => await getCurrentWindow().minimize());
   elements.maximizeBtn.addEventListener('click', async () => await getCurrentWindow().toggleMaximize());
-  elements.closeBtn.addEventListener('click', async () => await getCurrentWindow().close());
+  elements.closeBtn.addEventListener('click', confirmClose);
 
   const authorLink = document.getElementById('authorLink');
   if (authorLink) {
@@ -133,15 +134,15 @@ function setupDragAndDrop() {
     dropZone.classList.remove('drag-over');
   });
 
-  dropZone.addEventListener('drop', async (e) => {
+  dropZone.addEventListener('drop', (e) => {
     e.preventDefault();
     dropZone.classList.remove('drag-over');
+  });
 
-    const files = e.dataTransfer.files;
-    if (files.length > 0) {
-      const file = files[0];
-      const path = file.path || file.name;
-      await loadFile(path);
+  listen('tauri://drag-drop', async (event) => {
+    const paths = event.payload.paths;
+    if (paths && paths.length > 0) {
+      await loadFile(paths[0]);
     }
   });
 }
@@ -373,6 +374,7 @@ function renderTableHeader() {
 
   state.headers.forEach((header, index) => {
     const th = document.createElement('th');
+    th.style.position = 'relative';
     th.innerHTML = `
       <div class="header-content">
         <span class="header-text" data-index="${index}">${escapeHtml(header)}</span>
@@ -380,6 +382,7 @@ function renderTableHeader() {
           <button class="header-action-btn delete" data-index="${index}" title="Delete column">×</button>
         </div>
       </div>
+      <div class="column-resizer" data-index="${index}"></div>
     `;
 
     th.querySelector('.header-text').addEventListener('dblclick', (e) => {
@@ -390,6 +393,8 @@ function renderTableHeader() {
       e.stopPropagation();
       deleteColumn(index);
     });
+
+    setupColumnResize(th, index);
 
     headerRow.appendChild(th);
   });
@@ -975,6 +980,48 @@ function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+async function confirmClose() {
+  if (state.isModified) {
+    const confirmed = await window.__TAURI__.dialog.confirm(
+      'You have unsaved changes. Close without saving?',
+      { title: 'Unsaved Changes', kind: 'warning' }
+    );
+    if (!confirmed) return;
+  }
+  await getCurrentWindow().close();
+}
+
+function setupColumnResize(th, colIndex) {
+  const resizer = th.querySelector('.column-resizer');
+  if (!resizer) return;
+
+  let startX, startWidth;
+
+  resizer.addEventListener('mousedown', (e) => {
+    startX = e.pageX;
+    startWidth = th.offsetWidth;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const onMouseMove = (e) => {
+      const diff = e.pageX - startX;
+      const newWidth = Math.max(50, startWidth + diff);
+      th.style.width = newWidth + 'px';
+      th.style.minWidth = newWidth + 'px';
+    };
+
+    const onMouseUp = () => {
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  });
 }
 
 function disableBrowserFeatures() {
