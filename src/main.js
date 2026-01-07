@@ -23,6 +23,8 @@ const state = {
   history: [],
   historyIndex: -1,
   columnTypes: [],
+  treeViewData: null,
+  treeViewCell: null,
 };
 
 const elements = {
@@ -120,6 +122,10 @@ function setupEventListeners() {
       openUrl('https://github.com/askoq');
     });
   }
+
+  document.getElementById('closeTreeViewModal').addEventListener('click', hideTreeViewModal);
+  document.getElementById('cancelTreeView').addEventListener('click', hideTreeViewModal);
+  document.getElementById('saveTreeView').addEventListener('click', saveTreeView);
 }
 
 function setupDragAndDrop() {
@@ -453,6 +459,18 @@ function renderTableBody() {
         const match = escapeHtml(str.substring(index, index + query.length));
         const after = escapeHtml(str.substring(index + query.length));
         td.innerHTML = `${before}<mark>${match}</mark>${after}`;
+      } else if (isJsonObject(cell)) {
+        const parsed = tryParseJson(cell);
+        const isArray = Array.isArray(parsed);
+        const badge = document.createElement('span');
+        badge.className = 'cell-object';
+        badge.textContent = isArray ? `[${parsed.length}]` : `{${Object.keys(parsed).length}}`;
+        badge.addEventListener('click', (e) => {
+          e.stopPropagation();
+          showTreeView(parsed, actualIndex, cellIndex);
+        });
+        td.appendChild(badge);
+        td.classList.remove('editable');
       } else {
         td.textContent = cell;
       }
@@ -980,6 +998,217 @@ function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+function isJsonObject(str) {
+  if (typeof str !== 'string') return false;
+  const trimmed = str.trim();
+  return (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+    (trimmed.startsWith('[') && trimmed.endsWith(']'));
+}
+
+function tryParseJson(str) {
+  try {
+    return JSON.parse(str);
+  } catch {
+    return null;
+  }
+}
+
+function showTreeView(data, rowIndex, colIndex) {
+  state.treeViewData = JSON.parse(JSON.stringify(data));
+  state.treeViewCell = { row: rowIndex, col: colIndex };
+  const container = document.getElementById('treeViewContent');
+  container.innerHTML = '';
+  container.appendChild(renderTreeNode(state.treeViewData, null, []));
+  document.getElementById('treeViewModal').style.display = 'flex';
+}
+
+function hideTreeViewModal() {
+  document.getElementById('treeViewModal').style.display = 'none';
+  state.treeViewData = null;
+  state.treeViewCell = null;
+}
+
+function saveTreeView() {
+  if (!state.treeViewCell || !state.treeViewData) return;
+  const { row, col } = state.treeViewCell;
+  const newValue = JSON.stringify(state.treeViewData);
+  const oldValue = state.rows[row][col];
+
+  if (newValue !== oldValue) {
+    state.rows[row][col] = newValue;
+    pushHistory({
+      type: 'edit_cell',
+      row,
+      col,
+      oldVal: oldValue,
+      newVal: newValue
+    });
+    checkModified();
+    renderTableBody();
+    showToast('Saved', 'success');
+  }
+  hideTreeViewModal();
+}
+
+function renderTreeNode(data, key, path) {
+  const item = document.createElement('div');
+  item.className = 'tree-item';
+
+  if (data === null) {
+    const content = document.createElement('span');
+    if (key !== null) {
+      content.innerHTML = `<span class="tree-key">${escapeHtml(String(key))}</span>: `;
+    }
+    const valueSpan = document.createElement('span');
+    valueSpan.className = 'tree-value null tree-editable';
+    valueSpan.textContent = 'null';
+    valueSpan.addEventListener('dblclick', () => startTreeEdit(valueSpan, path, 'null'));
+    content.appendChild(valueSpan);
+    item.appendChild(content);
+    return item;
+  }
+
+  const type = typeof data;
+
+  if (type === 'object') {
+    const isArray = Array.isArray(data);
+    const count = isArray ? data.length : Object.keys(data).length;
+
+    const toggle = document.createElement('span');
+    toggle.className = 'tree-toggle';
+    toggle.textContent = '▼';
+
+    const label = document.createElement('span');
+    if (key !== null) {
+      label.innerHTML = `<span class="tree-key">${escapeHtml(String(key))}</span>: `;
+    }
+
+    const bracket = document.createElement('span');
+    bracket.className = 'tree-bracket';
+    bracket.textContent = isArray ? `[${count}]` : `{${count}}`;
+
+    const header = document.createElement('div');
+    header.appendChild(toggle);
+    header.appendChild(label);
+    header.appendChild(bracket);
+
+    const children = document.createElement('div');
+    children.className = 'tree-node';
+
+    if (isArray) {
+      data.forEach((val, idx) => {
+        children.appendChild(renderTreeNode(val, idx, [...path, idx]));
+      });
+    } else {
+      Object.entries(data).forEach(([k, v]) => {
+        children.appendChild(renderTreeNode(v, k, [...path, k]));
+      });
+    }
+
+    toggle.addEventListener('click', () => {
+      const isHidden = children.style.display === 'none';
+      children.style.display = isHidden ? 'block' : 'none';
+      toggle.textContent = isHidden ? '▼' : '▶';
+    });
+
+    item.appendChild(header);
+    item.appendChild(children);
+  } else {
+    let valueClass = 'tree-value tree-editable';
+    let displayValue = String(data);
+
+    if (type === 'string') {
+      valueClass += ' string';
+      displayValue = `"${escapeHtml(data)}"`;
+    } else if (type === 'number') {
+      valueClass += ' number';
+    } else if (type === 'boolean') {
+      valueClass += ' boolean';
+    }
+
+    const content = document.createElement('span');
+    if (key !== null) {
+      content.innerHTML = `<span class="tree-key">${escapeHtml(String(key))}</span>: `;
+    }
+    const valueSpan = document.createElement('span');
+    valueSpan.className = valueClass;
+    valueSpan.textContent = displayValue;
+    valueSpan.addEventListener('dblclick', () => startTreeEdit(valueSpan, path, data));
+    content.appendChild(valueSpan);
+    item.appendChild(content);
+  }
+
+  return item;
+}
+
+function startTreeEdit(element, path, currentValue) {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'cell-input';
+  input.value = typeof currentValue === 'string' ? currentValue : JSON.stringify(currentValue);
+  input.style.width = '200px';
+
+  const originalText = element.textContent;
+  element.textContent = '';
+  element.appendChild(input);
+  input.focus();
+  input.select();
+
+  const finishEdit = () => {
+    const newVal = input.value;
+    let parsed;
+
+    if (newVal === 'null') {
+      parsed = null;
+    } else if (newVal === 'true') {
+      parsed = true;
+    } else if (newVal === 'false') {
+      parsed = false;
+    } else if (!isNaN(parseFloat(newVal)) && isFinite(newVal)) {
+      parsed = parseFloat(newVal);
+    } else {
+      parsed = newVal;
+    }
+
+    setNestedValue(state.treeViewData, path, parsed);
+
+    let displayValue = String(parsed);
+    let valueClass = 'tree-value tree-editable';
+
+    if (parsed === null) {
+      valueClass += ' null';
+      displayValue = 'null';
+    } else if (typeof parsed === 'string') {
+      valueClass += ' string';
+      displayValue = `"${escapeHtml(parsed)}"`;
+    } else if (typeof parsed === 'number') {
+      valueClass += ' number';
+    } else if (typeof parsed === 'boolean') {
+      valueClass += ' boolean';
+    }
+
+    element.className = valueClass;
+    element.textContent = displayValue;
+  };
+
+  input.addEventListener('blur', finishEdit);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      input.blur();
+    } else if (e.key === 'Escape') {
+      element.textContent = originalText;
+    }
+  });
+}
+
+function setNestedValue(obj, path, value) {
+  let current = obj;
+  for (let i = 0; i < path.length - 1; i++) {
+    current = current[path[i]];
+  }
+  current[path[path.length - 1]] = value;
 }
 
 async function confirmClose() {
