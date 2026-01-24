@@ -1086,3 +1086,53 @@ mark {
 .tree-editable:hover {
   background: var(--bg-hover);
 }
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tree-key-editable {
+  cursor: pointer;
+}
+
+.tree-key-editable:hover {
+  background: var(--bg-hover);
+  border-radius: 2px;
+}
+
+.tree-action {
+  cursor: pointer;
+  padding: 0 4px;
+  border-radius: 2px;
+  font-size: 11px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.tree-row:hover .tree-action,
+.tree-add-row .tree-action {
+  opacity: 1;
+}
+
+.tree-delete {
+  color: var(--danger);
+  margin-left: 8px;
+}
+
+.tree-delete:hover {
+  background: rgba(248, 113, 113, 0.2);
+}
+
+.tree-add {
+  color: var(--success);
+}
+
+.tree-add:hover {
+  background: rgba(74, 222, 128, 0.2);
+}
+
+.tree-add-row {
+  padding: 4px 0;
+}

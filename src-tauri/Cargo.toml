@@ -1,6 +1,6 @@
 [package]
 name = "data-visualizer"
-version = "1.0.5"
+version = "1.0.6"
 description = "Application for viewing and editing JSON, JSONL, and CSV files."
 authors = ["askoq <https://github.com/askoq>"]
 edition = "2021"

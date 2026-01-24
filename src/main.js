@@ -69,6 +69,7 @@ const elements = {
 function init() {
   setupEventListeners();
   setupDragAndDrop();
+  setupPasteHandler();
 }
 
 function setupEventListeners() {
@@ -930,6 +931,173 @@ function handleKeyboard(e) {
   }
 }
 
+function setupPasteHandler() {
+  document.addEventListener('paste', (e) => {
+    if (state.editingCell) return;
+
+    const activeElement = document.activeElement;
+    if (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA') return;
+
+    e.preventDefault();
+    const text = e.clipboardData.getData('text');
+    if (text) {
+      handlePaste(text);
+    }
+  });
+}
+
+function handlePaste(text) {
+  if (!text || !text.trim()) {
+    showToast('Clipboard is empty', 'warning');
+    return;
+  }
+
+  const parsed = parseClipboardData(text.trim());
+  if (!parsed) {
+    showToast('Could not parse clipboard data', 'error');
+    return;
+  }
+
+  const { headers: newHeaders, rows: newRows } = parsed;
+
+  if (newRows.length === 0) {
+    showToast('No data to paste', 'warning');
+    return;
+  }
+
+  if (state.rows.length === 1 && state.rows[0].every(cell => cell === '')) {
+    state.headers = newHeaders;
+    state.rows = newRows;
+  } else {
+    if (newHeaders.length !== state.headers.length) {
+      const maxCols = Math.max(newHeaders.length, state.headers.length);
+      while (state.headers.length < maxCols) {
+        state.headers.push(`column${state.headers.length + 1}`);
+        state.rows.forEach(row => row.push(''));
+      }
+      newRows.forEach(row => {
+        while (row.length < maxCols) row.push('');
+      });
+    }
+    state.rows.push(...newRows);
+  }
+
+  state.columnTypes = detectTypes(state.rows);
+  updatePagination();
+  renderTable();
+  checkModified();
+  showToast(`Pasted ${newRows.length} rows`, 'success');
+}
+
+function parseClipboardData(text) {
+  if (text.startsWith('[')) {
+    try {
+      const arr = JSON.parse(text);
+      if (Array.isArray(arr) && arr.length > 0 && typeof arr[0] === 'object') {
+        const headers = Object.keys(arr[0]);
+        const rows = arr.map(obj => headers.map(h => {
+          const val = obj[h];
+          return typeof val === 'object' ? JSON.stringify(val) : String(val ?? '');
+        }));
+        return { headers, rows };
+      }
+    } catch { }
+  }
+
+  if (text.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(text);
+      if (typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const arrayKey = Object.keys(parsed).find(key => Array.isArray(parsed[key]));
+        if (arrayKey && parsed[arrayKey].length > 0 && typeof parsed[arrayKey][0] === 'object') {
+          const arr = parsed[arrayKey];
+          const headers = Object.keys(arr[0]);
+          const rows = arr.map(obj => headers.map(h => {
+            const val = obj[h];
+            return typeof val === 'object' ? JSON.stringify(val) : String(val ?? '');
+          }));
+          return { headers, rows };
+        }
+      }
+    } catch { }
+
+    try {
+      const lines = text.split('\n').filter(line => line.trim());
+      const objects = lines.map(line => JSON.parse(line));
+      if (objects.length > 0) {
+        const headers = Object.keys(objects[0]);
+        const rows = objects.map(obj => headers.map(h => {
+          const val = obj[h];
+          return typeof val === 'object' ? JSON.stringify(val) : String(val ?? '');
+        }));
+        return { headers, rows };
+      }
+    } catch { }
+  }
+
+  const lines = text.split('\n').filter(line => line.trim());
+
+  if (lines.length > 0 && lines[0].trim().startsWith('{')) {
+    try {
+      const objects = lines.map(line => JSON.parse(line.trim()));
+      if (objects.length > 0 && typeof objects[0] === 'object') {
+        const headers = Object.keys(objects[0]);
+        const rows = objects.map(obj => headers.map(h => {
+          const val = obj[h];
+          return typeof val === 'object' ? JSON.stringify(val) : String(val ?? '');
+        }));
+        return { headers, rows };
+      }
+    } catch { }
+  }
+
+  if (lines.length > 0) {
+    const delimiter = text.includes('\t') ? '\t' : ',';
+    const parsed = lines.map(line => parseCSVLine(line, delimiter));
+
+    const firstRowLooksLikeHeader = parsed[0].every(cell =>
+      isNaN(parseFloat(cell)) && cell.length < 50
+    );
+
+    if (parsed.length > 1 && firstRowLooksLikeHeader) {
+      const headers = parsed[0];
+      const rows = parsed.slice(1);
+      return { headers, rows };
+    } else {
+      const maxCols = Math.max(...parsed.map(row => row.length));
+      const headers = Array.from({ length: maxCols }, (_, i) => `column${i + 1}`);
+      return { headers, rows: parsed };
+    }
+  }
+
+  return null;
+}
+
+function parseCSVLine(line, delimiter = ',') {
+  const result = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === delimiter && !inQuotes) {
+      result.push(current);
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  result.push(current);
+  return result;
+}
+
 function showMainContent() {
   elements.welcomeScreen.style.display = 'none';
   elements.mainContent.style.display = 'flex';
@@ -1052,60 +1220,67 @@ function saveTreeView() {
   hideTreeViewModal();
 }
 
-function renderTreeNode(data, key, path) {
+function renderTreeNode(data, key, path, parentIsArray = false) {
   const item = document.createElement('div');
   item.className = 'tree-item';
 
-  if (data === null) {
-    const content = document.createElement('span');
-    if (key !== null) {
-      content.innerHTML = `<span class="tree-key">${escapeHtml(String(key))}</span>: `;
-    }
-    const valueSpan = document.createElement('span');
-    valueSpan.className = 'tree-value null tree-editable';
-    valueSpan.textContent = 'null';
-    valueSpan.addEventListener('dblclick', () => startTreeEdit(valueSpan, path, 'null'));
-    content.appendChild(valueSpan);
-    item.appendChild(content);
-    return item;
-  }
-
   const type = typeof data;
+  const isNull = data === null;
+  const isObject = type === 'object' && !isNull;
+  const isArray = Array.isArray(data);
 
-  if (type === 'object') {
-    const isArray = Array.isArray(data);
-    const count = isArray ? data.length : Object.keys(data).length;
+  const row = document.createElement('div');
+  row.className = 'tree-row';
 
+  if (isObject) {
     const toggle = document.createElement('span');
     toggle.className = 'tree-toggle';
     toggle.textContent = '▼';
+    row.appendChild(toggle);
 
-    const label = document.createElement('span');
     if (key !== null) {
-      label.innerHTML = `<span class="tree-key">${escapeHtml(String(key))}</span>: `;
+      const keySpan = document.createElement('span');
+      keySpan.className = 'tree-key tree-key-editable';
+      keySpan.textContent = String(key);
+      if (!parentIsArray) {
+        keySpan.addEventListener('dblclick', () => startKeyEdit(keySpan, path));
+      }
+      row.appendChild(keySpan);
+      row.appendChild(document.createTextNode(': '));
     }
 
     const bracket = document.createElement('span');
     bracket.className = 'tree-bracket';
-    bracket.textContent = isArray ? `[${count}]` : `{${count}}`;
+    bracket.textContent = isArray ? `[${data.length}]` : `{${Object.keys(data).length}}`;
+    row.appendChild(bracket);
 
-    const header = document.createElement('div');
-    header.appendChild(toggle);
-    header.appendChild(label);
-    header.appendChild(bracket);
+    if (path.length > 0) {
+      const deleteBtn = document.createElement('span');
+      deleteBtn.className = 'tree-action tree-delete';
+      deleteBtn.textContent = '×';
+      deleteBtn.title = 'Delete';
+      deleteBtn.addEventListener('click', () => deleteTreeNode(path));
+      row.appendChild(deleteBtn);
+    }
 
     const children = document.createElement('div');
     children.className = 'tree-node';
 
     if (isArray) {
       data.forEach((val, idx) => {
-        children.appendChild(renderTreeNode(val, idx, [...path, idx]));
+        children.appendChild(renderTreeNode(val, idx, [...path, idx], true));
       });
     } else {
       Object.entries(data).forEach(([k, v]) => {
-        children.appendChild(renderTreeNode(v, k, [...path, k]));
+        children.appendChild(renderTreeNode(v, k, [...path, k], false));
       });
     }
+
+    const addBtn = document.createElement('div');
+    addBtn.className = 'tree-add-row';
+    addBtn.innerHTML = '<span class="tree-action tree-add">+ Add</span>';
+    addBtn.addEventListener('click', () => addTreeNode(path, isArray));
+    children.appendChild(addBtn);
 
     toggle.addEventListener('click', () => {
       const isHidden = children.style.display === 'none';
@@ -1113,13 +1288,27 @@ function renderTreeNode(data, key, path) {
       toggle.textContent = isHidden ? '▼' : '▶';
     });
 
-    item.appendChild(header);
+    item.appendChild(row);
     item.appendChild(children);
   } else {
+    if (key !== null) {
+      const keySpan = document.createElement('span');
+      keySpan.className = 'tree-key tree-key-editable';
+      keySpan.textContent = String(key);
+      if (!parentIsArray) {
+        keySpan.addEventListener('dblclick', () => startKeyEdit(keySpan, path));
+      }
+      row.appendChild(keySpan);
+      row.appendChild(document.createTextNode(': '));
+    }
+
     let valueClass = 'tree-value tree-editable';
     let displayValue = String(data);
 
-    if (type === 'string') {
+    if (isNull) {
+      valueClass += ' null';
+      displayValue = 'null';
+    } else if (type === 'string') {
       valueClass += ' string';
       displayValue = `"${escapeHtml(data)}"`;
     } else if (type === 'number') {
@@ -1128,19 +1317,111 @@ function renderTreeNode(data, key, path) {
       valueClass += ' boolean';
     }
 
-    const content = document.createElement('span');
-    if (key !== null) {
-      content.innerHTML = `<span class="tree-key">${escapeHtml(String(key))}</span>: `;
-    }
     const valueSpan = document.createElement('span');
     valueSpan.className = valueClass;
     valueSpan.textContent = displayValue;
     valueSpan.addEventListener('dblclick', () => startTreeEdit(valueSpan, path, data));
-    content.appendChild(valueSpan);
-    item.appendChild(content);
+    row.appendChild(valueSpan);
+
+    if (path.length > 0) {
+      const deleteBtn = document.createElement('span');
+      deleteBtn.className = 'tree-action tree-delete';
+      deleteBtn.textContent = '×';
+      deleteBtn.title = 'Delete';
+      deleteBtn.addEventListener('click', () => deleteTreeNode(path));
+      row.appendChild(deleteBtn);
+    }
+
+    item.appendChild(row);
   }
 
   return item;
+}
+
+function startKeyEdit(element, path) {
+  const currentKey = path[path.length - 1];
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'cell-input';
+  input.value = String(currentKey);
+  input.style.width = '100px';
+
+  element.textContent = '';
+  element.appendChild(input);
+  input.focus();
+  input.select();
+
+  const finishEdit = () => {
+    const newKey = input.value.trim() || String(currentKey);
+    if (newKey !== String(currentKey)) {
+      renameTreeKey(path, newKey);
+    }
+    refreshTreeView();
+  };
+
+  input.addEventListener('blur', finishEdit);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') input.blur();
+    else if (e.key === 'Escape') refreshTreeView();
+  });
+}
+
+function renameTreeKey(path, newKey) {
+  const parentPath = path.slice(0, -1);
+  const oldKey = path[path.length - 1];
+  const parent = getNestedValue(state.treeViewData, parentPath);
+
+  if (parent && typeof parent === 'object' && !Array.isArray(parent)) {
+    const value = parent[oldKey];
+    delete parent[oldKey];
+    parent[newKey] = value;
+  }
+}
+
+function deleteTreeNode(path) {
+  const parentPath = path.slice(0, -1);
+  const key = path[path.length - 1];
+  const parent = getNestedValue(state.treeViewData, parentPath);
+
+  if (Array.isArray(parent)) {
+    parent.splice(key, 1);
+  } else if (parent && typeof parent === 'object') {
+    delete parent[key];
+  }
+
+  refreshTreeView();
+}
+
+function addTreeNode(path, isArray) {
+  const target = path.length === 0 ? state.treeViewData : getNestedValue(state.treeViewData, path);
+
+  if (isArray) {
+    target.push('');
+  } else {
+    let newKey = 'newKey';
+    let counter = 1;
+    while (target.hasOwnProperty(newKey)) {
+      newKey = `newKey${counter++}`;
+    }
+    target[newKey] = '';
+  }
+
+  refreshTreeView();
+}
+
+function refreshTreeView() {
+  const container = document.getElementById('treeViewContent');
+  container.innerHTML = '';
+  container.appendChild(renderTreeNode(state.treeViewData, null, []));
+}
+
+function getNestedValue(obj, path) {
+  let current = obj;
+  for (const key of path) {
+    if (current == null) return undefined;
+    current = current[key];
+  }
+  return current;
 }
 
 function startTreeEdit(element, path, currentValue) {
@@ -1173,24 +1454,7 @@ function startTreeEdit(element, path, currentValue) {
     }
 
     setNestedValue(state.treeViewData, path, parsed);
-
-    let displayValue = String(parsed);
-    let valueClass = 'tree-value tree-editable';
-
-    if (parsed === null) {
-      valueClass += ' null';
-      displayValue = 'null';
-    } else if (typeof parsed === 'string') {
-      valueClass += ' string';
-      displayValue = `"${escapeHtml(parsed)}"`;
-    } else if (typeof parsed === 'number') {
-      valueClass += ' number';
-    } else if (typeof parsed === 'boolean') {
-      valueClass += ' boolean';
-    }
-
-    element.className = valueClass;
-    element.textContent = displayValue;
+    refreshTreeView();
   };
 
   input.addEventListener('blur', finishEdit);
